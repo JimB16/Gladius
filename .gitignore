@@ -1,0 +1,11 @@
+# generated
+*.elf
+*.o
+*.d
+*.bin
+*.pyc
+build/
+
+# baseiso
+*.iso
+baseiso/
