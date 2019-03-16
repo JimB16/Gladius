@@ -160,22 +160,31 @@ def setFileSize(name, FileSize):
 
 
 class RomSection():
-    def __init__(self, name, hash, address, flags, size):
+    def __init__(self, name, hash, address, flags, size, checksum):
         self.name = name
         self.hash = hash
         self.address = address
+        self.new_address = address
         self.flags = flags
         self.size = size
+        self.new_size = size
+        self.checksum = checksum
 
 def getAddress(item):
     return item.address
 
 RomMap = []
 
-def addRomSection(name, hash, address, flags, size): # filename, hash?, offset, flags?, filesize
+def addRomSection(name, hash, address, flags, size, checksum): # filename, hash?, offset, flags?, filesize, checksum?
     #if size > 0:
-    RomMap.append(RomSection(name, hash, address, flags, size))
+    RomMap.append(RomSection(name, hash, address, flags, size, checksum))
     return None
+
+def changeAddressOfRomSection(old_addr, new_addr, old_size, new_size):
+    for item in RomMap:
+        if ((item.flags != 0) and (item.address == old_addr) and (item.size == old_size)):
+            item.address = new_addr
+            item.size = new_size
 
 def alignAdr(adr, alignVal):
     if (adr & (alignVal-1)) != 0:
@@ -235,11 +244,11 @@ class Disassembler(object):
         with open(becmap) as fin:
             for line in fin: # 6.vers 0xd79fe 0x7839da0 0x0 0x8e8
                 words = line.split() # filename, ?, offset, flags?, filesize
-                if len(words) == 5:
+                if len(words) == 6:
                     filepath = os.path.join(self.config.path, dir + "/" + words[0])
                     FileSize = os.path.getsize(filepath)
                     #print("filesize: " + words[4] + " = " + hex(FileSize))
-                    addRomSection(words[0], int(words[1], 16), int(words[2], 16), int(words[3], 16), FileSize) # filename, hash?, offset, flags?, filesize
+                    addRomSection(words[0], int(words[1], 16), int(words[2], 16), int(words[3], 16), FileSize, int(words[5], 16)) # filename, hash?, offset, flags?, filesize
                     #addFileToFST(words[1], int(words[2], 16), FileSize)
         
         if os.path.dirname(filename) != "":
@@ -257,22 +266,39 @@ class Disassembler(object):
         startaddress = RomMap[0].address
         addr = startaddress
         print("address[0]: " + hex(addr))
+        diffaddr = 0
         for item in RomMap:
-            item.address = addr
             if item.flags != 0:
+                #changeAddressOfRomSection(item.address, addr, item.size, size)
                 continue
             filepath = os.path.join(self.config.path, dir + "/" + item.name)
             size = os.path.getsize(filepath)
-            item.size = size
+            if item.address != addr and diffaddr == 0:
+                print("Adr diff: org: " + hex(item.address) + ", new: " + hex(addr))
+                diffaddr = 1
+            item.new_address = addr
+            item.new_size = size
+            #if item.size == 0:
+            #    continue
             addr += size + 8 + 0x1f
             #if size == 0:
             #    addr += 1
             addr &= 0xffffffe0
+
+        # fix the second instant of some file entries
+        for i in range(len(RomMap)):
+            if RomMap[i].flags != 0:
+                for j in range(len(RomMap)):
+                    if (i != j) and (RomMap[j].flags == 0) and (RomMap[i].address == RomMap[j].address):
+                        RomMap[i].new_address = RomMap[j].new_address
+                    #if (i != j) and (RomMap[j].flags == 0) and (RomMap[i].address == RomMap[j].address) and (RomMap[i].size == RomMap[j].size):
+                        #RomMap[i].new_address = RomMap[j].address
+                        #RomMap[i].new_size = RomMap[j].size
     
         RomMap.sort(key=operator.attrgetter('hash')) # address
         for item in RomMap:
             output_rom.write(struct.pack('<I', int(item.hash)))
-            output_rom.write(struct.pack('<I', int(item.address)))
+            output_rom.write(struct.pack('<I', int(item.new_address)))
             output_rom.write(struct.pack('<I', int(item.flags)))
             output_rom.write(struct.pack('<I', int(item.size)))
         
@@ -288,90 +314,14 @@ class Disassembler(object):
             print "writing " + dir + "/" + item.name
             filepart = bytearray(open(filepath, "rb").read())
             output_rom.write(filepart)
-            output_rom.write(struct.pack('<4s', "test")) # checksum?
+            #output_rom.write(struct.pack('<4s', "test")) # checksum?
+            output_rom.write(struct.pack('<I', item.checksum)) # checksum?
             output_rom.write(struct.pack('<I', int(0)))
             while((output_rom.tell() % 0x20) != 0):
                 output_rom.write(struct.pack('<B', int(0)))
             i += 1
             #if i >= 1:
             #    break
-        
-        '''if old_address != item.address:
-            output += hex(old_address) + " " + "/Unknown_" + hex(old_address) + ".bin" + " " + hex(-1) + " " + hex(item.address-old_address) + "\n"
-        output += hex(item.address) + " " + str(item.name) + " " + hex(item.fileID) + " " + hex(item.size) + "\n"
-        old_address = alignAdr(item.address + item.size, 4)'''
-        '''setFileSize("/fst.bin", alignAdr(calcSizeOfFST(), 4))
-        offset = 0
-        with open(becmap) as fin:
-            for line in fin:
-                words = line.split() # address, path+name, fileID, size
-                if len(words) == 4:
-                    offset = setOffsetOfFile(words[1], offset)
-                    if (words[1] == "/appldr.bin") or (words[1] == "/bootfile.dol"):
-                        offset = alignAdr(offset, 0x100)
-                    offset = alignAdr(offset, 4)
-    
-        output += getOutputRomMapFileID() + "\n"
-        #output += str(RootDir.subDirs) + "\n"
-        output += RootDir.printDir("")
-        output += "\nFSTSize: " + hex(calcSizeOfFST())
-        # (FST, string)
-        newFST = RootDir.createFST(0, 0, 0)
-        output += "\CreatedFST: " + str(newFST)
-
-        
-        # write new fst.bin-file
-        if os.path.dirname(fst_filename) != "":
-            if not os.path.exists(os.path.dirname(fst_filename)):
-                os.makedirs(os.path.dirname(fst_filename))
-        output_fst = open(fst_filename, 'wb')
-        for i in newFST[0]:
-            byte1 = i & 0xff
-            byte2 = (i >> 8) & 0xff
-            byte3 = (i >> 16) & 0xff
-            byte4 = (i >> 24) & 0xff
-            output_fst.write(struct.pack('B', byte4))
-            output_fst.write(struct.pack('B', byte3))
-            output_fst.write(struct.pack('B', byte2))
-            output_fst.write(struct.pack('B', byte1))
-        output_fst.write(newFST[1])
-        output_fst.close()
-        
-        
-        if os.path.dirname(filename) != "":
-            if not os.path.exists(os.path.dirname(filename)):
-                os.makedirs(os.path.dirname(filename))
-        output_rom = open(filename, 'wb')
-
-        bootfile_offset = 0
-        fst_offset = 0
-        
-        with open(becmap) as fin:
-            for line in fin:
-                words = line.split() # address, path+name, fileID, size
-                if len(words) == 4:
-                    filepath = os.path.join(self.config.path, dir + words[1])
-                    print "writing " + dir + words[1]
-                    filepart = bytearray(open(filepath, "rb").read())
-                    
-                    if (words[1] == "/bootfile.dol"):
-                        bootfile_offset = output_rom.tell()
-                        print("bootfile_offset: " + hex(bootfile_offset))
-                    elif (words[1] == "/fst.bin"):
-                        fst_offset = output_rom.tell()
-                        print("fst_offset: " + hex(fst_offset))
-
-                    output_rom.write(filepart)
-                    
-                    if (words[1] == "/appldr.bin") or (words[1] == "/bootfile.dol"):
-                        disasm.fill_rom(filename, output_rom, 0x100, '\x00')
-                    else:
-                        disasm.fill_rom(filename, output_rom, 0x4, '\x00')
-                        
-        output_rom.seek(0x420, 0)
-        output_rom.write(struct.pack('>I', int(bootfile_offset)))
-        output_rom.seek(0x424, 0)
-        output_rom.write(struct.pack('>I', int(fst_offset)))'''
         
         return output
 

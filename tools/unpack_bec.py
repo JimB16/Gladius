@@ -45,11 +45,13 @@ class BecFS(object):
         DataOffset = []
         Data3 = []
         DataSize = []
+        CheckSum = []
         for i in range(NrOfFiles):
             DataPos += [file.ReadWord_r(base_address+0x10+0x10*i)]
             DataOffset += [file.ReadWord_r(base_address+0x14+0x10*i)]
             Data3 += [file.ReadWord_r(base_address+0x18+0x10*i)] # 0 or 2
             DataSize += [file.ReadWord_r(base_address+0x1c+0x10*i)]
+            CheckSum += [file.ReadWord_r(DataOffset[i] + DataSize[i])]
         
         filename = ""
         #print "DataOffset[0]: " + hex(DataOffset[0])
@@ -139,7 +141,7 @@ class BecFS(object):
             else:
                 filename = str(i) + ".bin"
             file.WriteSectionInFile(filedir + filename, DataOffset[i], DataSize[i])
-            output += filename + " " + hex(DataPos[i]) + " " + hex(DataOffset[i]) + " " + hex(Data3[i]) + " " + hex(DataSize[i]) + "\n"
+            output += filename + " " + hex(DataPos[i]) + " " + hex(DataOffset[i]) + " " + hex(Data3[i]) + " " + hex(DataSize[i]) + " " + hex(CheckSum[i]) + "\n"
         
         return output
 
