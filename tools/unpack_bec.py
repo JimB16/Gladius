@@ -64,12 +64,6 @@ class BecFS(object):
         
         filename = ""
         for i in range(NrOfFiles): # NrOfFiles
-            filename2 = ""
-            if OffsetCorrection[i] > 0:
-                filename2 = str(i) + "_2.bin"
-                file.WriteSectionInFile(filedir + filename2, DataOffset[i], OffsetCorrection[i])
-            else:
-                filename2 = "nothing"
             Offset = DataOffset[i]
             Offset += OffsetCorrection[i]
             Offset += FileAlignment - 1
@@ -158,7 +152,15 @@ class BecFS(object):
                 filename = str(i) + ".txt"
             else:
                 filename = str(i) + ".bin"
+			
             file.WriteSectionInFile(filedir + filename, Offset, DataSize[i])
+			
+            filename2 = "zlib/" + filename + ".zlib"
+            if OffsetCorrection[i] > 0:
+                file.WriteSectionInFile(filedir + filename2, DataOffset[i], OffsetCorrection[i])
+            else:
+                filename2 = "nothing"
+			
             output += filename + " " + filename2 + " " + hex(DataPos[i]) + " " + hex(DataOffset[i]) + " " + hex(OffsetCorrection[i]) + " " + hex(Data3[i]) + " " + hex(DataSize[i]) + " " + hex(CheckSum[i]) + "\n"
         
         return output

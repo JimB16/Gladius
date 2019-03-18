@@ -77,6 +77,15 @@ class FileHandler(object):
         hword = bytearray(self.file.read(2))
         return (hword[0] << 8) | (hword[1] << 0)
 
+    def ReadHWord_r(self, address):
+        if not self.AdrInRange(address):
+            return 0
+        
+        address = (address & 0xffffffff) - self.base_address
+        self.file.seek(address)
+        hword = bytearray(self.file.read(2))
+        return (hword[1] << 8) | (hword[0] << 0)
+
     def ReadByte(self, address):
         if not self.AdrInRange(address):
             return 0
