@@ -160,13 +160,15 @@ def setFileSize(name, FileSize):
 
 
 class RomSection():
-    def __init__(self, name, hash, address, flags, size, checksum):
+    def __init__(self, name, name2, hash, address, size2, flags, size, checksum):
         self.name = name
+        self.name2 = name2
         self.hash = hash
         self.address = address
         self.new_address = address
         self.flags = flags
         self.size = size
+        self.size2 = size2
         self.new_size = size
         self.checksum = checksum
 
@@ -175,9 +177,9 @@ def getAddress(item):
 
 RomMap = []
 
-def addRomSection(name, hash, address, flags, size, checksum): # filename, hash?, offset, flags?, filesize, checksum?
+def addRomSection(name, name2, hash, address, size2, flags, size, checksum): # filename, hash?, offset, offsetcorrection, flags?, filesize, checksum?
     #if size > 0:
-    RomMap.append(RomSection(name, hash, address, flags, size, checksum))
+    RomMap.append(RomSection(name, name2, hash, address, size2, flags, size, checksum))
     return None
 
 def changeAddressOfRomSection(old_addr, new_addr, old_size, new_size):
@@ -240,16 +242,25 @@ class Disassembler(object):
 
     def create_rom(self, dir, filename, fst_filename, becmap, debug=False):
         output = ""
+        filealignment = 0x0
+        NrOfFiles = 0x0
+        HeaderMagic = 0x0
 		
         with open(becmap) as fin:
-            for line in fin: # 6.vers 0xd79fe 0x7839da0 0x0 0x8e8
+            for line in fin:
                 words = line.split() # filename, ?, offset, flags?, filesize
-                if len(words) == 6:
+                if len(words) == 8:
                     filepath = os.path.join(self.config.path, dir + "/" + words[0])
                     FileSize = os.path.getsize(filepath)
-                    #print("filesize: " + words[4] + " = " + hex(FileSize))
-                    addRomSection(words[0], int(words[1], 16), int(words[2], 16), int(words[3], 16), FileSize, int(words[5], 16)) # filename, hash?, offset, flags?, filesize
-                    #addFileToFST(words[1], int(words[2], 16), FileSize)
+                    FileSize2 = 0
+                    if words[1] != "nothing":
+                        filepath2 = os.path.join(self.config.path, dir + "/" + words[1])
+                        FileSize2 = os.path.getsize(filepath2)
+                    addRomSection(words[0], words[1], int(words[2], 16), int(words[3], 16), FileSize2, int(words[5], 16), FileSize, int(words[7], 16)) # filename, filename2, hash?, offset, filesize2, flags?, filesize, checksum?
+                elif len(words) == 3:
+                    filealignment = int(words[0], 16)
+                    NrOfFiles = int(words[1], 16)
+                    HeaderMagic = int(words[2], 16)
         
         if os.path.dirname(filename) != "":
             if not os.path.exists(os.path.dirname(filename)):
@@ -257,9 +268,10 @@ class Disassembler(object):
         output_rom = open(filename, 'wb')
 		# write header
         output_rom.write(struct.pack('<4s', " ceb"))
-        output_rom.write(struct.pack('<I', int(0x200003)))
-        output_rom.write(struct.pack('<I', int(27298))) # Nr of files
-        output_rom.write(struct.pack('<I', int(0x5000000)))
+        output_rom.write(struct.pack('<H', int(0x3)))
+        output_rom.write(struct.pack('<H', int(filealignment)))
+        output_rom.write(struct.pack('<I', int(NrOfFiles))) # Nr of files
+        output_rom.write(struct.pack('<I', int(HeaderMagic)))
     
         # updated the filesizes
         RomMap.sort(key=operator.attrgetter('address')) # address
@@ -267,6 +279,8 @@ class Disassembler(object):
         addr = startaddress
         print("address[0]: " + hex(addr))
         diffaddr = 0
+        oldaddr = addr
+        itemnr = 0
         for item in RomMap:
             if item.flags != 0:
                 #changeAddressOfRomSection(item.address, addr, item.size, size)
@@ -274,16 +288,23 @@ class Disassembler(object):
             filepath = os.path.join(self.config.path, dir + "/" + item.name)
             size = os.path.getsize(filepath)
             if item.address != addr and diffaddr == 0:
-                print("Adr diff: org: " + hex(item.address) + ", new: " + hex(addr))
+                print("Adr diff: org: " + hex(item.address) + ", new: " + hex(addr) + ", prevaddr: " + hex(oldaddr))
                 diffaddr = 1
+            oldaddr = addr
             item.new_address = addr
             item.new_size = size
             #if item.size == 0:
             #    continue
-            addr += size + 8 + 0x1f
+            if item.size2 != 0:
+                addr += item.size2 + 8 + (filealignment - 1)
+                addr &= (0x100000000 - filealignment)
             #if size == 0:
             #    addr += 1
-            addr &= 0xffffffe0
+            addr += size + 0 + (filealignment - 1) # GCExclusive + 8 for checksum being saved here
+            addr &= (0x100000000 - filealignment)
+            if (item.size2 == 0) and (size == 0):
+                addr += filealignment
+            itemnr += 1
 
         # fix the second instant of some file entries
         for i in range(len(RomMap)):
@@ -298,27 +319,44 @@ class Disassembler(object):
         RomMap.sort(key=operator.attrgetter('hash')) # address
         for item in RomMap:
             output_rom.write(struct.pack('<I', int(item.hash)))
-            output_rom.write(struct.pack('<I', int(item.new_address)))
-            output_rom.write(struct.pack('<I', int(item.flags)))
+            #output_rom.write(struct.pack('<I', int(item.new_address)))
+            output_rom.write(struct.pack('<I', int(item.address)))
+            output_rom.write(struct.pack('<B', int((item.size2 >> 0) & 0xff)))
+            output_rom.write(struct.pack('<B', int((item.size2 >> 8) & 0xff)))
+            output_rom.write(struct.pack('<B', int((item.size2 >> 16) & 0xff)))
+            #output_rom.write(struct.pack('<B', int(0)))
+            #output_rom.write(struct.pack('<B', int(0)))
+            #output_rom.write(struct.pack('<B', int(0)))
+            output_rom.write(struct.pack('<B', int(item.flags)))
             output_rom.write(struct.pack('<I', int(item.size)))
-        
-        while((output_rom.tell() % 0x20) != 0):
+
+        while((output_rom.tell() % filealignment) != 0):
             output_rom.write(struct.pack('<I', int(0)))
     
         RomMap.sort(key=operator.attrgetter('address')) # address
         i = 0
         for item in RomMap:
             if item.flags != 0:
+                print "not writing " + dir + "/" + item.name + " with flag " + hex(item.flags)
                 continue
+            if item.size2 != 0:
+                filepath2 = os.path.join(self.config.path, dir + "/" + item.name2)
+                filepart2 = bytearray(open(filepath2, "rb").read())
+                output_rom.write(filepart2)
+                output_rom.write(struct.pack('<I', int(0))) # checksum? PS2Exclusive
+                output_rom.write(struct.pack('<I', int(0))) # PS2Exclusive
+                while((output_rom.tell() % filealignment) != 0):
+                    output_rom.write(struct.pack('<B', int(0)))
             filepath = os.path.join(self.config.path, dir + "/" + item.name)
-            print "writing " + dir + "/" + item.name
+            #print "writing " + dir + "/" + item.name
             filepart = bytearray(open(filepath, "rb").read())
             output_rom.write(filepart)
-            #output_rom.write(struct.pack('<4s', "test")) # checksum?
-            output_rom.write(struct.pack('<I', item.checksum)) # checksum?
-            output_rom.write(struct.pack('<I', int(0)))
-            while((output_rom.tell() % 0x20) != 0):
+            #output_rom.write(struct.pack('<I', item.checksum)) # checksum? GCExclusive
+            #output_rom.write(struct.pack('<I', int(0))) # GCExclusive
+            while((output_rom.tell() % filealignment) != 0):
                 output_rom.write(struct.pack('<B', int(0)))
+            if (item.size2 == 0) and (item.size == 0):
+                output_rom.write('\0' * (filealignment)) # write dvd filler material into archive
             i += 1
             #if i >= 1:
             #    break
