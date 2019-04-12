@@ -7,8 +7,8 @@ import zlib
 # https://stackoverflow.com/questions/9050260/what-does-a-zlib-header-look-like
 
 
-def compress_packet(packet):
-    return zlib.compress(buffer(packet),1)
+def compress_packet(packet, level):
+    return zlib.compress(buffer(packet), level)
 
 def decompress_packet(compressed_packet):
     return zlib.decompress(compressed_packet)
@@ -17,6 +17,7 @@ if __name__ == "__main__":
     infile = ""
     outfilename = ""
     compress = 0
+    level = 1
     i = 1
     while i < len(sys.argv):
         if sys.argv[i] == "-x": # extract/decompress
@@ -26,6 +27,9 @@ if __name__ == "__main__":
         elif sys.argv[i] == "-c": # compress
             compress = 1
             infile = sys.argv[i+1]
+            i += 2
+        elif sys.argv[i] == "-l": # compression level
+            level = int(sys.argv[i+1], 10)
             i += 2
         elif sys.argv[i] == "-o":
             outfilename = sys.argv[i+1]
@@ -37,7 +41,9 @@ if __name__ == "__main__":
     if compress == 0: # decompress
         output = decompress_packet(indata)
     elif compress == 1: # compress
-        output = compress_packet(indata)
+        output = compress_packet(indata, level)
+        checksum = zlib.adler32(indata)
+        print "Checksum (adler32): " + hex(checksum)
 	
     if not os.path.exists(os.path.dirname(outfilename)):
         os.makedirs(os.path.dirname(outfilename))
@@ -56,7 +62,7 @@ if __name__ == "__main__":
 	#print bytearray(output)
 
     packet1 = bytearray([0x1, 0x0, 0x2])
-    cpacket1 = compress_packet(output)
+    cpacket1 = compress_packet(output, 1)
     out = ""
     for value in cpacket1:
         out += value.encode("hex") + ", "
