@@ -121,7 +121,7 @@ def createBecArchive(dir, filename, becmap, gc, debug=False):
             alignFileSizeWithZeros(output_rom, output_rom.tell(), filealignment)
 		
         filepath = dir + "/" + item.name
-        #print "writing " + dir + "/" + item.name
+        #print("writing " + dir + "/" + item.name)
         filedata = bytearray(open(filepath, "rb").read())
         output_rom.write(filedata)
         if ((item.size2 == 0) and (item.size > 0)) or (gc == 1):
@@ -134,7 +134,7 @@ def createBecArchive(dir, filename, becmap, gc, debug=False):
         
         i += 1
         if (i % 2500) == 0:
-            print "write progress... " + str(i) + "/" + str(len(RomMap))
+            print("write progress... " + str(i) + "/" + str(len(RomMap)))
         
     return output
 
@@ -161,12 +161,11 @@ if __name__ == "__main__":
             filename = sys.argv[i+1]
             i += 2
         elif sys.argv[i] == "-debug":
-            filelist_on = 0
             debugFlag = True
             i += 2
         else:
             i += 1
 
-    output = createBecArchive(dir, filename, becmap, gc)
+    output = createBecArchive(dir, filename, becmap, gc, debugFlag)
 	
-    print output
+    print(output)

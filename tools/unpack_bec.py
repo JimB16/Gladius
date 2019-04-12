@@ -12,7 +12,7 @@ def WriteSectionInFile(file, dirname, filename, addr, size):
         os.makedirs(os.path.dirname(dirname + filename))
         
     file.seek(addr)
-    fByteArray = bytearray(file.read(size))
+    fByteArray = file.read(size)
     m = hashlib.md5()
     m.update(fByteArray)
 	
