@@ -52,7 +52,7 @@ def ReadByte(file, Offset):
     return word
 
 
-def diagnose(filename="baseiso.iso", filedir="", outFileList="", debug=False):
+def diagnose(filename="baseiso.iso", filedir="data_bec", outFileList="filelist.txt", debug=False):
     file = open(filename, "rb+")
 
     header_output = ""
@@ -207,16 +207,16 @@ def diagnose2(file2, filedir="", debug=False):
         else:
             filename2 = "nothing"
 	
-        output += filename + " " + filename2 + " " + hex(DataPos[i]) + " " + hex(DataOffset[i]) + " " + hex(OffsetCorrection[i]) + " " + hex(Data3[i]) + " " + hex(DataSize[i]) + " " + hex(CheckSums1[i]) + " " + hex(CheckSums2[i]) + "\n"
+        output += filename + " " + filename2 + " " + hex(DataPos[i]).rstrip("L") + " " + hex(DataOffset[i]).rstrip("L") + " " + hex(OffsetCorrection[i]).rstrip("L") + " " + hex(Data3[i]).rstrip("L") + " " + hex(DataSize[i]).rstrip("L") + " " + hex(CheckSums1[i]).rstrip("L") + " " + hex(CheckSums2[i]).rstrip("L") + "\n"
         
     return output
 
         
 if __name__ == "__main__":
     HelpText = "usage: unpack_bec.py -i InputFile -o OutputFolder -filelist OutputFileList"
-    filename = ""
-    outdir = ""
-    outFileList = "bec_info.txt"
+    filename = "gladius.bec"
+    outdir = "gladius_bec/"
+    outFileList = "bec_filelist.txt"
     
     i = 1
     if (len(sys.argv) != 7) or (len(sys.argv) != 7):
