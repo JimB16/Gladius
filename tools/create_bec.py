@@ -31,24 +31,26 @@ def alignFileSizeWithZeros(file, pos, alignment):
 
 
 def createBecArchive(dir, filename, becmap, gc, debug=False):
-    output = ""
     filealignment = 0x0
     NrOfFiles = 0x0
     HeaderMagic = 0x0
 	
     with open(becmap) as fin:
         for line in fin:
-            words = line.split() # filename, ?, offset, flags?, filesize
-            if len(words) == 9:
-                FileSize = os.path.getsize(dir + "/" + words[0])
-                FileSize2 = 0
-                if words[1] != "nothing":
-                    FileSize2 = os.path.getsize(dir + "/" + words[1])
-                addRomSection(words[0], words[1], int(words[2], 16), int(words[3], 16), FileSize2, int(words[5], 16), FileSize, int(words[7], 16), int(words[8], 16)) # filename, filename2, hash?, offset, filesize2, flags?, filesize, checksum?, checksum2?
-            elif len(words) == 3:
+            words = line.split()
+            if len(words) == 3:
                 filealignment = int(words[0], 16)
                 NrOfFiles = int(words[1], 16)
                 HeaderMagic = int(words[2], 16)
+            else:
+                words_temp = line.split("\"") # filename
+                words = [words_temp[1]] + words_temp[2].split() # ?, offset, flags?, filesize
+                if len(words) == 9:
+                    FileSize = os.path.getsize(dir + "/" + words[0])
+                    FileSize2 = 0
+                    if words[1] != "nothing":
+                        FileSize2 = os.path.getsize(dir + "/" + words[1])
+                    addRomSection(words[0], words[1], int(words[2], 16), int(words[3], 16), FileSize2, int(words[5], 16), FileSize, int(words[7], 16), int(words[8], 16)) # filename, filename2, hash?, offset, filesize2, flags?, filesize, checksum?, checksum2?
         
     if os.path.dirname(filename) != "":
         if not os.path.exists(os.path.dirname(filename)):
@@ -61,9 +63,13 @@ def createBecArchive(dir, filename, becmap, gc, debug=False):
     output_rom.write(struct.pack('<I', int(NrOfFiles))) # Nr of files
     output_rom.write(struct.pack('<I', int(HeaderMagic)))
     
+    #print "NrOfFiles: " + str(NrOfFiles) + " == " + str(len(RomMap))
+	
     # updated the filesizes
     RomMap.sort(key=operator.attrgetter('address')) # address
-    addr = RomMap[0].address
+    #addr = RomMap[0].address
+    addr = 16 + NrOfFiles*4*4 + (filealignment - 1)
+    addr &= (0x100000000 - filealignment)
     diffaddr = 0
     oldaddr = addr
 	
@@ -135,14 +141,12 @@ def createBecArchive(dir, filename, becmap, gc, debug=False):
         i += 1
         if (i % 2500) == 0:
             print("write progress... " + str(i) + "/" + str(len(RomMap)))
-        
-    return output
 
 
 if __name__ == "__main__":
-    filename = ''
-    becmap = ''
-    dir = ''
+    filename = "DATA.BEC"
+    becmap = "bec_filelist.txt"
+    dir = "./data_bec"
     debugFlag = False
     gc = 0
     
@@ -166,6 +170,4 @@ if __name__ == "__main__":
         else:
             i += 1
 
-    output = createBecArchive(dir, filename, becmap, gc, debugFlag)
-	
-    print(output)
+    createBecArchive(dir, filename, becmap, gc, debugFlag)

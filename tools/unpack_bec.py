@@ -207,7 +207,7 @@ def diagnose2(file2, filedir="", debug=False):
         else:
             filename2 = "nothing"
 	
-        output += filename + " " + filename2 + " " + hex(DataPos[i]).rstrip("L") + " " + hex(DataOffset[i]).rstrip("L") + " " + hex(OffsetCorrection[i]).rstrip("L") + " " + hex(Data3[i]).rstrip("L") + " " + hex(DataSize[i]).rstrip("L") + " " + hex(CheckSums1[i]).rstrip("L") + " " + hex(CheckSums2[i]).rstrip("L") + "\n"
+        output += "\"" + filename + "\" " + filename2 + " " + hex(DataPos[i]).rstrip("L") + " " + hex(DataOffset[i]).rstrip("L") + " " + hex(OffsetCorrection[i]).rstrip("L") + " " + hex(Data3[i]).rstrip("L") + " " + hex(DataSize[i]).rstrip("L") + " " + hex(CheckSums1[i]).rstrip("L") + " " + hex(CheckSums2[i]).rstrip("L") + "\n"
         
     return output
 
