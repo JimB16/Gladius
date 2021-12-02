@@ -11,20 +11,35 @@ import gladiushashes
 import queue
 import threading
 from collections import namedtuple
+import zlib
 
 
-# PACK BEC-ARCHIVE
+separator = ','
+
+
+class RomSection():
+    def __init__(self, name, compname, hash, address, compsize, flags, size, checksum, checksum2):
+        self.name = name
+        self.compname = compname
+        self.hash = hash
+        self.address = address
+        self.new_address = address
+        self.flags = flags
+        self.size = size
+        self.compsize = compsize
+        self.checksum = checksum
+        self.checksum2 = checksum2
+
+
+# UNPACK BEC-ARCHIVE
 #####################
 
-MAX_NR_OF_THREADS = 1
-file_queue = queue.Queue()
 
-
-def ReadSection(file, addr, size, debug=False):
+def ReadSection(file, addr, size):
     file.seek(addr)
     return file.read(size)
 
-def WriteSectionInFile(fByteArray, dirname, filename, addr, size, debug=False):
+def WriteSectionInFile(fByteArray, dirname, filename, size, debug=False):
     filename2 = dirname + filename
     if not os.path.exists(os.path.dirname(filename2)):
         os.makedirs(os.path.dirname(filename2))
@@ -35,30 +50,19 @@ def WriteSectionInFile(fByteArray, dirname, filename, addr, size, debug=False):
 
     print("Write out file " + filename2)
 
-def file_worker():
-    while True:
-        item = file_queue.get()
-        if item is None:
-            break
-        fByteArray, dirname, filename, addr, size = item
-        WriteSectionInFile(fByteArray, dirname, filename, addr, size)
-        file_queue.task_done()
-
 def GetFilenameOfFile(file, addr, size, pathhash, i, debug=False):
     if pathhash in gladiushashes.pathhashes:
-        outfilename = gladiushashes.pathhashes[pathhash]
-    else:
-        file.seek(addr)
-        fByteArray = file.read(size)
-        m = hashlib.md5()
-        m.update(fByteArray)
-        md5 = m.hexdigest()
-        if md5 in gladiushashes.hashes:
-            outfilename = gladiushashes.hashes[md5]
-        else:
-            outfilename = GetNumberedFilenameOfFile(file, addr, i)
-	
-    return outfilename
+        return gladiushashes.pathhashes[pathhash]
+
+    file.seek(addr)
+    fByteArray = file.read(size)
+    m = hashlib.md5()
+    m.update(fByteArray)
+    md5 = m.hexdigest()
+    if md5 in gladiushashes.hashes:
+        return gladiushashes.hashes[md5]
+
+    return GetNumberedFilenameOfFile(file, addr, i)
 
 def GetNumberedFilenameOfFile(file, Offset, i):
     filename = ""
@@ -170,9 +174,9 @@ def ReadByte(file, Offset):
     return word
 
 
-def diagnose(filename, filedir, outFileList, debug=False):
+def unpackBecArchive(filename, filedir, outFileList, console, demobec=False, debug=False):
     file = open(filename, "rb+")
-    header_output = diagnose2(file, filedir, debug)
+    header_output = unpackBecArchive2(file, filedir, console, demobec, debug)
     
     headerfilename = filedir + outFileList
     if not os.path.exists(os.path.dirname(headerfilename)) and os.path.dirname(headerfilename):
@@ -180,161 +184,162 @@ def diagnose(filename, filedir, outFileList, debug=False):
     fheader = open(headerfilename, 'w')
     fheader.write(header_output)
 
-def diagnose2(file, filedir, debug=False):
+def unpackBecArchive2(file, filedir, console, demobec=False, debug=False):
     output = ""
+
+    RomSections = []
     
+    BecHeader = namedtuple('BecHeader', ['FileAlignment', 'NrOfFiles', 'HeaderMagic'])
+
     file.seek(0x6)
     data = file.read(10)
-    BecHeader = namedtuple('BecHeader', ['FileAlignment', 'NrOfFiles', 'HeaderMagic'])
     header = BecHeader._make(struct.unpack('<HII', data))
-    print("Nr of Files in the bec-file: " + str(header.NrOfFiles))
-    output += hex(header.FileAlignment) + " " + hex(header.NrOfFiles) + " " + hex(header.HeaderMagic) + "\n"
-    
-    PathHash = []
-    DataOffset = []
-    OffsetCorrection = []
-    Data3 = []
-    DataSize = []
-    CheckSums1 = []
-    CheckSums2 = []
-    FileEntry = namedtuple('FileEntry', ['PathHash', 'DataOffset', 'correction0', 'correction1', 'correction2', 'Data3', 'DataSize'])
-    for i in range(header.NrOfFiles):
-        data = file.read(0x10) # file.seek(0x10+0x10*i)
-        entry = FileEntry._make(struct.unpack('<IIBBBBI', data))
 
-        PathHash += [entry.PathHash]
-        DataOffset += [entry.DataOffset]
-        correction = (entry.correction2 << 16) + (entry.correction1 << 8) + (entry.correction0 << 0)
-        OffsetCorrection += [correction]
-        Data3 += [entry.Data3] # 0 or 2
-        DataSize += [entry.DataSize]
-	
+    print("Nr of Files in the bec-file: " + str(header.NrOfFiles))
+    print("File Alignment: " + str(header.FileAlignment))
+    output += hex(header.FileAlignment) + separator + hex(header.NrOfFiles) + separator + hex(header.HeaderMagic) + "\n"
+
+    FileEntry = namedtuple('FileEntry', ['PathHash', 'DataOffset', 'CompDataSize', 'DataSize'])
     for i in range(header.NrOfFiles):
-        if OffsetCorrection[i] > 0: # PS2 version (checksum after zlib file)
-            Offset = DataOffset[i] + OffsetCorrection[i]
+        data = file.read(0x10)
+        entry = FileEntry._make(struct.unpack('<IIII', data))
+
+        romSection = RomSection("", "", entry.PathHash, entry.DataOffset, entry.CompDataSize & 0x00FFFFFF, entry.CompDataSize>>24, entry.DataSize, 0, 0)
+        RomSections.append(romSection)
+
+    i = 0
+    for romSection in RomSections:
+        if romSection.compsize > 0: # PS2 version (checksum after zlib file)
+            Offset = romSection.address + romSection.compsize
         else: # GC version (checksum after uncompressed file)
-            Offset = DataOffset[i] + (header.FileAlignment - 1)
+            Offset = romSection.address + (header.FileAlignment - 1)
             Offset &= (0x100000000 - header.FileAlignment)
-            Offset += DataSize[i]
+            Offset += romSection.size
         file.seek(Offset)
         data = file.read(8)
         CheckSum1, CheckSum2 = struct.unpack("<II", data)
-        CheckSums1 += [CheckSum1]
-        CheckSums2 += [CheckSum2]
-    
-    for i in range(header.NrOfFiles):
-        Offset = DataOffset[i] + OffsetCorrection[i] + (header.FileAlignment - 1)
-        if OffsetCorrection[i] > 0:
+
+        Offset = romSection.address + romSection.compsize + (header.FileAlignment - 1)
+        if romSection.compsize > 0:
             Offset += 8
         Offset &= (0x100000000 - header.FileAlignment)
-		
-        filename = GetFilenameOfFile(file, Offset, DataSize[i], PathHash[i], i)
-        fByteArray = ReadSection(file, Offset, DataSize[i])
-        WriteSectionInFile(fByteArray, filedir, filename, Offset, DataSize[i])
-        #file_queue.put((fByteArray, filedir, filename, Offset, DataSize[i],))
-		
+
+        filename = GetFilenameOfFile(file, Offset, romSection.size, romSection.hash, i)
         filename2 = "zlib/" + filename + ".zlib"
-        if OffsetCorrection[i] > 0:
-            fByteArray = ReadSection(file, DataOffset[i], OffsetCorrection[i])
-            WriteSectionInFile(fByteArray, filedir, filename2, DataOffset[i], OffsetCorrection[i])
-            #file_queue.put((fByteArray, filedir, filename2, DataOffset[i], OffsetCorrection[i],))
+		
+        if romSection.compsize > 0:
+            fByteArray = ReadSection(file, romSection.address, romSection.compsize)
+            WriteSectionInFile(fByteArray, filedir, filename2, romSection.compsize)
         else:
             filename2 = "nothing"
-	
-        output += "\"" + filename + "\" " + "\"" + filename2 + "\" " + hex(PathHash[i]).rstrip("L") + " " + hex(DataOffset[i]).rstrip("L") + " " + hex(OffsetCorrection[i]).rstrip("L") + " " + hex(Data3[i]).rstrip("L") + " " + hex(DataSize[i]).rstrip("L") + " " + hex(CheckSums1[i]).rstrip("L") + " " + hex(CheckSums2[i]).rstrip("L") + "\n"
 
-    for i in range(MAX_NR_OF_THREADS):
-        file_queue.put(None)
+        if (console != "xbox") or (romSection.compsize == 0): # xbox doesn't have uncompressed files, so here we uncompress the compressed files
+            fByteArray = ReadSection(file, Offset, romSection.size)
+            WriteSectionInFile(fByteArray, filedir, filename, romSection.size)
+        else:
+            fByteArray = ReadSection(file, romSection.address, romSection.compsize)
+            fByteArray2 = zlib.decompress(fByteArray)
+            WriteSectionInFile(fByteArray2, filedir, filename, romSection.size)
+	
+        output += filename + separator
+        output += filename2 + separator
+        output += hex(romSection.hash).rstrip("L") + separator
+        output += hex(romSection.address).rstrip("L") + separator
+        output += hex(romSection.flags).rstrip("L") + separator
+        output += hex(CheckSum1).rstrip("L") + separator + hex(CheckSum2).rstrip("L") + separator #+ "\n"
+        output += hex(romSection.size).rstrip("L") + separator + hex(romSection.compsize).rstrip("L") + "\n"
+
+        i += 1
         
     return output
 
 
 
-# UNPACK BEC-ARCHIVE
+# PACK BEC-ARCHIVE
 #####################
 
 RomMap = []
 
-class RomSection():
-    def __init__(self, name, name2, hash, address, size2, flags, size, checksum, checksum2):
-        self.name = name
-        self.name2 = name2
-        self.hash = hash
-        self.address = address
-        self.new_address = address
-        self.flags = flags
-        self.size = size
-        self.size2 = size2
-        self.checksum = checksum
-        self.checksum2 = checksum2
-
-def addRomSection(name, name2, hash, address, size2, flags, size, checksum, checksum2): # filename, hash?, offset, offsetcorrection, flags?, filesize, checksum?
-    RomMap.append(RomSection(name, name2, hash, address, size2, flags, size, checksum, checksum2))
 
 def alignFileSizeWithZeros(file, pos, alignment):
     target = (pos + alignment - 1) & (0x100000000-alignment)
     amount = target - pos
     file.write(b'\0' * amount)
 
-
-def createBecArchive(dir, filename, becmap, gc, debug=False):
-    filealignment = 0x0
+def readFileList(becmap, dir):
+    FileAlignment = 0x0
     NrOfFiles = 0x0
     HeaderMagic = 0x0
-	
+
     with open(becmap) as fin:
         for line in fin:
-            words = line.split()
+            words = line.split(separator)
             if len(words) == 3:
-                filealignment = int(words[0], 16)
+                FileAlignment = int(words[0], 16)
                 NrOfFiles = int(words[1], 16)
                 HeaderMagic = int(words[2], 16)
             else:
-                words_temp = line.split("\"") # filename, filename2
-                words = [words_temp[1]] + [words_temp[3]] + words_temp[4].split() # ?, offset, flags?, filesize
+                words = line.split(separator) # filename, filename2, hash, offset, flags, checksum, checksum2
                 #print(words)
-                if len(words) == 9:
+                if len(words) > 3:
                     FileSize = os.path.getsize(dir + "/" + words[0])
                     FileSize2 = 0
                     if words[1] != "nothing":
                         FileSize2 = os.path.getsize(dir + "/" + words[1])
-                    addRomSection(words[0], words[1], int(words[2], 16), int(words[3], 16), FileSize2, int(words[5], 16), FileSize, int(words[7], 16), int(words[8], 16)) # filename, filename2, hash?, offset, filesize2, flags?, filesize, checksum?, checksum2?
+                    RomMap.append(RomSection(words[0], words[1], int(words[2], 16), int(words[3], 16), FileSize2, int(words[4], 16), FileSize, int(words[5], 16), int(words[6], 16))) # filename, filename2, hash?, offset, filesize2, flags?, filesize, checksum?, checksum2?
+
+    return FileAlignment, NrOfFiles, HeaderMagic
+
+def createBecArchive(dir, filename, becmap, console, demobec=False, ignorechecksum=False, debug=False):
+    FileAlignment = 0x0
+    NrOfFiles = 0x0
+    HeaderMagic = 0x0
+
+    FileAlignment, NrOfFiles, HeaderMagic = readFileList(becmap, dir)
+    #if (console == "xbox"):
+    #    FileAlignment >>= 8
         
     if os.path.dirname(filename) != "":
         if not os.path.exists(os.path.dirname(filename)):
             os.makedirs(os.path.dirname(filename))
-    output_rom = open(filename, 'wb')
+    output_bec = open(filename, 'wb')
 
 	# write header
-    output_rom.write(struct.pack('<4sHHII', b" ceb", int(0x3), int(filealignment), int(NrOfFiles), int(HeaderMagic)))
+    version = 0x3 # useChecksumVersion
+    if ignorechecksum:
+        version = 0x1 # ignoreChecksumVersion
+    output_bec.write(struct.pack('<4sHHII', b" ceb", int(version), int(FileAlignment), int(NrOfFiles), int(HeaderMagic)))
 
     # updated the filesizes
     RomMap.sort(key=operator.attrgetter('address')) # address
-    #addr = RomMap[0].address
-    addr = 0x10 + NrOfFiles*0x10 + (filealignment - 1)
-    addr &= (0x100000000 - filealignment)
+    addr = 0x10 + NrOfFiles*0x10 + (FileAlignment - 1)
+    addr &= (0x100000000 - FileAlignment)
     diffaddr = 0
     oldaddr = addr
 	
     for item in RomMap:
-        if item.flags != 0:
+        if item.flags == 2:
             continue
         
-        #item.size = os.path.getsize(dir + "/" + item.name)
         if item.address != addr and diffaddr == 0:
-            print("Adr diff: org: " + hex(item.address) + ", new: " + hex(addr) + ", prevaddr: " + hex(oldaddr))
+            print("Adr diff: org: " + hex(item.address) + ", new: " + hex(addr) + ", prevaddr: " + hex(oldaddr) + ", " + item.name)
             diffaddr = 1
         oldaddr = addr
         item.new_address = addr
-        if item.size2 > 0:
-            addr += item.size2 + 8 + (filealignment - 1)
-            addr &= (0x100000000 - filealignment)
-        addr += item.size + (filealignment - 1)
-        if ((item.size2 == 0) and (item.size > 0)) or (gc == 1):
+
+        if (item.compsize > 0):
+            addr += item.compsize + 8 + (FileAlignment - 1)
+            addr &= (0x100000000 - FileAlignment)
+
+        if (console != "xbox") or (item.compsize == 0): # XBox only uses compressed zlib files, except for really small files
+            addr += item.size + (FileAlignment - 1)
+            if ((console == "xbox") and (item.size == 0)):
+                addr += 8
+        if ((item.compsize == 0) and (item.size > 0)) or (console == "gc"):
             addr += 8 # GCExclusive + 8 for checksum being saved here
-        addr &= (0x100000000 - filealignment)
-        if (item.size2 == 0) and (item.size == 0) and (gc == 0): # PS2Exclusive
-            addr += filealignment
+        addr &= (0x100000000 - FileAlignment)
+        if (item.compsize == 0) and (item.size == 0) and (console == "ps2"): # PS2Exclusive
+            addr += FileAlignment
 
     # fix the second instant of some file entries
     for i in range(len(RomMap)):
@@ -344,41 +349,42 @@ def createBecArchive(dir, filename, becmap, gc, debug=False):
                     RomMap[i].new_address = RomMap[j].new_address
                     RomMap[i].size = RomMap[j].size
     
-    RomMap.sort(key=operator.attrgetter('hash')) # address
+    RomMap.sort(key=operator.attrgetter('hash'))
     for item in RomMap:
-        output_rom.write(struct.pack('<II', int(item.hash), int(item.new_address)))
-        output_rom.write(struct.pack('<BBB', int((item.size2 >> 0) & 0xff), int((item.size2 >> 8) & 0xff), int((item.size2 >> 16) & 0xff)))
-        output_rom.write(struct.pack('<BI', int(item.flags), int(item.size)))
+        output_bec.write(struct.pack('<IIII', int(item.hash), int(item.new_address), int(item.compsize & 0xffffff) | (int(item.flags) << 24), int(item.size)))
 
-    alignFileSizeWithZeros(output_rom, output_rom.tell(), filealignment)
+    alignFileSizeWithZeros(output_bec, output_bec.tell(), FileAlignment)
     
-    RomMap.sort(key=operator.attrgetter('address')) # address
+    RomMap.sort(key=operator.attrgetter('address'))
     i = 0
     for item in RomMap:
-        if item.flags != 0: # skip files where flag == 2
+        if item.flags == 2: # skip files where flag == 2
             continue
 
-        if item.size2 > 0:
-            filepath2 = dir + "/" + item.name2
+        if (item.compsize > 0):
+            filepath2 = dir + "/" + item.compname
             filedata2 = bytearray(open(filepath2, "rb").read())
-            output_rom.write(filedata2)
-            output_rom.write(struct.pack('<II', int(item.checksum), int(item.checksum2))) # checksum? PS2Exclusive
-            alignFileSizeWithZeros(output_rom, output_rom.tell(), filealignment)
-		
-        filepath = dir + "/" + item.name
-        file = open(filepath, "rb")
-        filedata = bytearray(file.read())
-        file.close()
-        output_rom.write(filedata)
-        if ((item.size2 == 0) and (item.size > 0)) or (gc == 1):
-            output_rom.write(struct.pack('<II', item.checksum, item.checksum2)) # checksum? GCExclusive
-		
-        alignFileSizeWithZeros(output_rom, output_rom.tell(), filealignment)
-			
-        if (item.size2 == 0) and (item.size == 0) and (gc == 0):
-            output_rom.write(b'\0' * filealignment) # write dvd filler material into archive PS2Exclusive
+            output_bec.write(filedata2)
+            output_bec.write(struct.pack('<II', int(item.checksum), int(item.checksum2))) # checksum? PS2Exclusive
+            alignFileSizeWithZeros(output_bec, output_bec.tell(), FileAlignment)
 
-        output_rom.flush()
+        if (console != "xbox") or (item.compsize == 0):
+            filepath = dir + "/" + item.name
+            file = open(filepath, "rb")
+            filedata = bytearray(file.read())
+            file.close()
+            output_bec.write(filedata)
+            if ((console == "xbox") and (item.size == 0)):
+                output_bec.write(struct.pack('<II', item.checksum, item.checksum2)) # checksum?
+        if ((item.compsize == 0) and (item.size > 0)) or (console == "gc"):
+            output_bec.write(struct.pack('<II', item.checksum, item.checksum2)) # checksum? GCExclusive
+		
+        alignFileSizeWithZeros(output_bec, output_bec.tell(), FileAlignment)
+			
+        if (item.compsize == 0) and (item.size == 0) and (console == "ps2"):
+            output_bec.write(b'\0' * FileAlignment) # write dvd filler material into archive PS2Exclusive
+
+        output_bec.flush()
         
         i += 1
         if (i % 2500) == 0:
@@ -390,19 +396,27 @@ if __name__ == "__main__":
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('-pack', action='store', nargs=3, type=str, metavar=("inputDir", "outputFile", "becFilelist"), help="pack files into a bec-archive")
     group.add_argument('-unpack', action='store', nargs=3, type=str, metavar=("inputFile", "outputDir", "becFilelist"), help="unpack files from a bec-archive")
-    parser.add_argument("--gc", action="store_true", help="activate GC mode") # switch between PS2 and GC Mode, the bec-formats they use don't seem completely compatible
+    #parser.add_argument("--gc", action="store_true", help="activate GC mode") # switch between PS2 and GC Mode, the bec-formats they use don't seem completely compatible
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--gc', action='store_true', help="activate GC mode")
+    group.add_argument('--ps2', action='store_true')
+    group.add_argument('--xbox', action='store_true')
     args = parser.parse_args()
 
     start = time.time()
     debug = True
-    gc = 0
+    console = "ps2"
     if args.gc:
-        gc = 1
+        console = "gc"
+    if args.ps2:
+        console = "ps2"
+    if args.xbox:
+        console = "xbox"
 
     if args.pack:
-        createBecArchive(args.pack[0], args.pack[1], args.pack[2], gc, debug)
+        createBecArchive(args.pack[0], args.pack[1], args.pack[2], console, debug)
     if args.unpack:
-        diagnose(args.unpack[0], args.unpack[1], args.unpack[2], debug)
+        unpackBecArchive(args.unpack[0], args.unpack[1], args.unpack[2], console, debug)
 
     if debug:
         elapsed_time_fl = (time.time() - start)
