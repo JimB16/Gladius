@@ -228,8 +228,9 @@ def unpackBecArchive2(file, filedir, console, demobec=False, debug=False):
         filename2 = "zlib/" + filename + ".zlib"
 		
         if romSection.compsize > 0:
-            fByteArray = ReadSection(file, romSection.address, romSection.compsize)
-            WriteSectionInFile(fByteArray, filedir, filename2, romSection.compsize)
+            if (console != "xbox"): # don't output the compressed files on the XBox version
+                fByteArray = ReadSection(file, romSection.address, romSection.compsize)
+                WriteSectionInFile(fByteArray, filedir, filename2, romSection.compsize)
         else:
             filename2 = "nothing"
 
@@ -266,7 +267,7 @@ def alignFileSizeWithZeros(file, pos, alignment):
     amount = target - pos
     file.write(b'\0' * amount)
 
-def readFileList(becmap, dir):
+def readFileList(becmap, dir, console):
     FileAlignment = 0x0
     NrOfFiles = 0x0
     HeaderMagic = 0x0
@@ -285,6 +286,20 @@ def readFileList(becmap, dir):
                     FileSize = os.path.getsize(dir + "/" + words[0])
                     FileSize2 = 0
                     if words[1] != "nothing":
+                        # compress files here for xbox
+                        if (console == "xbox"):
+                            filepath = dir + "/" + words[0]
+                            file = open(filepath, "rb")
+                            filedata = bytearray(file.read())
+                            file.close()
+                            output = zlib.compress(filedata, 1)
+                            outfilename = dir + "/" + "zlib/" + words[0] + ".zlib"
+                            if not os.path.exists(os.path.dirname(outfilename)):
+                                os.makedirs(os.path.dirname(outfilename))
+                            outfile = open(outfilename, 'wb')
+                            outfile.write(output)
+                            outfile.flush()
+                            outfile.close()
                         FileSize2 = os.path.getsize(dir + "/" + words[1])
                     RomMap.append(RomSection(words[0], words[1], int(words[2], 16), int(words[3], 16), FileSize2, int(words[4], 16), FileSize, int(words[5], 16), int(words[6], 16))) # filename, filename2, hash?, offset, filesize2, flags?, filesize, checksum?, checksum2?
 
@@ -295,7 +310,7 @@ def createBecArchive(dir, filename, becmap, console, demobec=False, ignorechecks
     NrOfFiles = 0x0
     HeaderMagic = 0x0
 
-    FileAlignment, NrOfFiles, HeaderMagic = readFileList(becmap, dir)
+    FileAlignment, NrOfFiles, HeaderMagic = readFileList(becmap, dir, console)
     #if (console == "xbox"):
     #    FileAlignment >>= 8
         
@@ -367,6 +382,7 @@ def createBecArchive(dir, filename, becmap, console, demobec=False, ignorechecks
             output_bec.write(filedata2)
             output_bec.write(struct.pack('<II', int(item.checksum), int(item.checksum2))) # checksum? PS2Exclusive
             alignFileSizeWithZeros(output_bec, output_bec.tell(), FileAlignment)
+                
 
         if (console != "xbox") or (item.compsize == 0):
             filepath = dir + "/" + item.name
